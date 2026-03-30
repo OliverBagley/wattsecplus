@@ -1,6 +1,6 @@
 //
 //  SMC.swift
-//  WattSec
+//  WattSec+
 //
 //  Original by Serhiy Mytrovtsiy at github.com/exelban/stats
 //  Modified by Ben Beutton on 3/4/25.

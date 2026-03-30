@@ -6,17 +6,21 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXFileReference section */
-		B56F52D92D74A7EE0086A15E /* WattSec.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WattSec.app; sourceTree = BUILT_PRODUCTS_DIR; };
-/* End PBXFileReference section */
+/* Begin PBXBuildFile section */
+		A7B42CF12F79C157007F1811 /* WattSecApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B42CEF2F79C157007F1811 /* WattSecApp.swift */; };
+		A7B42CF22F79C157007F1811 /* SMC.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B42CED2F79C157007F1811 /* SMC.swift */; };
+		A7B42CF32F79C157007F1811 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A7B42CEA2F79C157007F1811 /* Preview Assets.xcassets */; };
+		A7B42CF42F79C157007F1811 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A7B42CEC2F79C157007F1811 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
 
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		B56F52DB2D74A7EE0086A15E /* WattSec */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = WattSec;
-			sourceTree = "<group>";
-		};
-/* End PBXFileSystemSynchronizedRootGroup section */
+/* Begin PBXFileReference section */
+		A7B42CEA2F79C157007F1811 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		A7B42CEC2F79C157007F1811 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A7B42CED2F79C157007F1811 /* SMC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMC.swift; sourceTree = "<group>"; };
+		A7B42CEE2F79C157007F1811 /* WattSec.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WattSec.entitlements; sourceTree = "<group>"; };
+		A7B42CEF2F79C157007F1811 /* WattSecApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WattSecApp.swift; sourceTree = "<group>"; };
+		B56F52D92D74A7EE0086A15E /* WattSecPlus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WattSecPlus.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		B56F52D62D74A7EE0086A15E /* Frameworks */ = {
@@ -29,10 +33,30 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A7B42CEB2F79C157007F1811 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				A7B42CEA2F79C157007F1811 /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		A7B42CF02F79C157007F1811 /* WattSec */ = {
+			isa = PBXGroup;
+			children = (
+				A7B42CEB2F79C157007F1811 /* Preview Content */,
+				A7B42CEC2F79C157007F1811 /* Assets.xcassets */,
+				A7B42CED2F79C157007F1811 /* SMC.swift */,
+				A7B42CEE2F79C157007F1811 /* WattSec.entitlements */,
+				A7B42CEF2F79C157007F1811 /* WattSecApp.swift */,
+			);
+			path = WattSec;
+			sourceTree = "<group>";
+		};
 		B56F52D02D74A7EE0086A15E = {
 			isa = PBXGroup;
 			children = (
-				B56F52DB2D74A7EE0086A15E /* WattSec */,
+				A7B42CF02F79C157007F1811 /* WattSec */,
 				B56F52DA2D74A7EE0086A15E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -40,7 +64,7 @@
 		B56F52DA2D74A7EE0086A15E /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				B56F52D92D74A7EE0086A15E /* WattSec.app */,
+				B56F52D92D74A7EE0086A15E /* WattSecPlus.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -60,14 +84,11 @@
 			);
 			dependencies = (
 			);
-			fileSystemSynchronizedGroups = (
-				B56F52DB2D74A7EE0086A15E /* WattSec */,
-			);
 			name = WattSec;
 			packageProductDependencies = (
 			);
 			productName = WattSec;
-			productReference = B56F52D92D74A7EE0086A15E /* WattSec.app */;
+			productReference = B56F52D92D74A7EE0086A15E /* WattSecPlus.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -109,6 +130,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A7B42CF32F79C157007F1811 /* Preview Assets.xcassets in Resources */,
+				A7B42CF42F79C157007F1811 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -119,6 +142,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A7B42CF12F79C157007F1811 /* WattSecApp.swift in Sources */,
+				A7B42CF22F79C157007F1811 /* SMC.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -161,6 +186,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -186,6 +212,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
@@ -227,6 +254,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -245,6 +273,7 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Release;
 		};
@@ -258,10 +287,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"WattSec/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = WattSec;
+				INFOPLIST_KEY_CFBundleDisplayName = "WattSec+";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -271,8 +301,8 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 2025.03.05;
-				PRODUCT_BUNDLE_IDENTIFIER = com.beutton.WattSec;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.oliverbagley.WattSecPlus;
+				PRODUCT_NAME = WattSecPlus;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -288,10 +318,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"WattSec/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = WattSec;
+				INFOPLIST_KEY_CFBundleDisplayName = "WattSec+";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -301,8 +332,8 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 2025.03.05;
-				PRODUCT_BUNDLE_IDENTIFIER = com.beutton.WattSec;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.oliverbagley.WattSecPlus;
+				PRODUCT_NAME = WattSecPlus;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};

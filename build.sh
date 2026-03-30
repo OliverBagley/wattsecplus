@@ -23,7 +23,7 @@ entitlements_file=WattSec/WattSec.entitlements
 usage() {
 	cat << EOF
 Usage: $0 [OPTIONS]
-Build WattSec.app and optionally package it in a DMG file
+Build WattSec+ and optionally package it in a DMG file
 
 Options:
   -h, --help             Show help and exit
@@ -74,7 +74,7 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-echo "Building WattSec v$version..."
+echo "Building WattSec+ v$version..."
 
 for cmd in xcodebuild; do
 	if ! command -v $cmd >/dev/null; then
@@ -125,18 +125,18 @@ xcodebuild \
 	clean build
 
 echo "Cleaning up build files..."
-find $dest_dir -maxdepth 1 ! -name WattSec.app ! -path $dest_dir -exec rm -rf {} +
+find $dest_dir -maxdepth 1 ! -name WattSecPlus.app ! -path $dest_dir -exec rm -rf {} +
 
-app_path="$dest_dir/WattSec.app"
+app_path="$dest_dir/WattSecPlus.app"
 if [ $sign_app = true ]; then
-	echo "Code signing WattSec.app..."
+	echo "Code signing WattSec+..."
 	[ ! -f $entitlements_file ] && error "Entitlements file not found: $entitlements_file"
 	[ -z $bundle_identifier ] && error "Bundle identifier not found"
 	codesign -s $developer_id -f --timestamp -o runtime -i $bundle_identifier --entitlements $entitlements_file $app_path
 fi
 
 if [ $create_dmg = false ]; then
-	echo "Build v$version complete: $dest_dir/WattSec.app"
+	echo "Build v$version complete: $dest_dir/WattSecPlus.app"
 	exit 0
 fi
 
@@ -148,27 +148,27 @@ iconutil -c icns AppIcon.iconset
 
 echo "Creating DMG..."
 mkdir tmp_dmg
-mv WattSec.app tmp_dmg/
+mv WattSecPlus.app tmp_dmg/
 create-dmg \
-	--volname WattSec \
+	--volname "WattSec+" \
 	--volicon AppIcon.icns \
 	--window-pos 200 120 \
 	--window-size 800 400 \
 	--icon-size 100 \
-	--icon WattSec.app 200 190 \
-	--hide-extension WattSec.app \
+	--icon WattSecPlus.app 200 190 \
+	--hide-extension WattSecPlus.app \
 	--app-drop-link 600 185 \
-	WattSec.dmg \
+	WattSecPlus.dmg \
 	tmp_dmg/
 rm -rf tmp_dmg AppIcon.iconset AppIcon.icns
 
 popd >/dev/null
 
 if [ $sign_app = true ]; then
-	echo "Notarizing WattSec.dmg..."
-	xcrun notarytool submit $dest_dir/WattSec.dmg --keychain-profile "$keychain_profile" --wait
-	echo "Stapling ticket to WattSec.dmg..."
-	xcrun stapler staple $dest_dir/WattSec.dmg
+	echo "Notarizing WattSec+.dmg..."
+	xcrun notarytool submit $dest_dir/WattSecPlus.dmg --keychain-profile "$keychain_profile" --wait
+	echo "Stapling ticket to WattSec+.dmg..."
+	xcrun stapler staple $dest_dir/WattSecPlus.dmg
 fi
 
-echo "Build v$version complete: $dest_dir/WattSec.dmg"
+echo "Build v$version complete: $dest_dir/WattSecPlus.dmg"

@@ -10,6 +10,11 @@
 
 Display macOS power usage (wattage) in the menu bar
 
+## Differences in this fork
+
+Minimal changes to include an optional Uptime display and some customistion on fontsize and case. 
+All credit to beutton for the original app.
+
 ## Installation
 
 WattSec can be installed with Homebrew:
@@ -43,4 +48,5 @@ open dist/WattSec.app
 
 ## Credit
 
+- [WattSec](https://github.com/beutton/wattsec) for the base WattSec app
 - [Stats](https://github.com/exelban/stats) for SMC polling

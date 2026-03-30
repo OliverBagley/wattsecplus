@@ -1,6 +1,6 @@
 //
 //  WattSecApp.swift
-//  WattSec
+//  WattSec+
 //
 //  Created by Ben Beutton on 3/4/25.
 //
@@ -41,12 +41,48 @@ enum WidthMode: String, CaseIterable {
     case fixed
 }
 
+enum LabelCase: String, CaseIterable {
+    case uppercase
+    case lowercase
+}
+
+enum FontSize: Int, CaseIterable {
+    case extraSmall = 0
+    case small = 1
+    case medium = 2
+    case large = 3
+    case extraLarge = 4
+
+    var pointSize: CGFloat {
+        switch self {
+        case .extraSmall: return 10
+        case .small:      return 12
+        case .medium:     return 12.5
+        case .large:      return 13
+        case .extraLarge: return 15
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .extraSmall: return "Extra Small"
+        case .small:      return "Small"
+        case .medium:     return "Medium"
+        case .large:      return "Large"
+        case .extraLarge: return "Extra Large"
+        }
+    }
+}
+
 // MARK: Default Settings
 
 private struct Defaults {
     static let detailLevel: DetailLevel = .medium
     static let paceLevel: PaceLevel = .fast
     static let widthMode: WidthMode = .dynamic
+    static let fontSize: FontSize = .medium
+    static let labelCase: LabelCase = .lowercase
+    static let showUptime: Bool = true
 }
 
 // MARK: Constants
@@ -69,6 +105,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var paceLevel: PaceLevel = Defaults.paceLevel
     private var widthMode: WidthMode = Defaults.widthMode
     private var launchAtLogin: Bool = false
+    private var showUptime: Bool = false
+    private var fontSize: FontSize = Defaults.fontSize
+    private var labelCase: LabelCase = Defaults.labelCase
     
     // New properties for fixed width mode
     private var widestWidths: [DetailLevel: [Int: CGFloat]] = [:]
@@ -96,6 +135,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func loadUserPreferences() {
         let defaults = UserDefaults.standard
+
+        // Register factory defaults — only applied when a key has never been set
+        defaults.register(defaults: [
+            "detailLevel": Defaults.detailLevel.rawValue,
+            "paceLevel":   Defaults.paceLevel.rawValue,
+            "widthMode":   Defaults.widthMode.rawValue,
+            "fontSize":    Defaults.fontSize.rawValue,
+            "labelCase":   Defaults.labelCase.rawValue,
+            "showUptime":  Defaults.showUptime
+        ])
+
         let currentVersion = 1
         let savedVersion = defaults.integer(forKey: "settingsVersion")
         
@@ -111,6 +161,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         detailLevel = DetailLevel(rawValue: defaults.integer(forKey: "detailLevel")) ?? Defaults.detailLevel
         paceLevel = PaceLevel(rawValue: defaults.integer(forKey: "paceLevel")) ?? Defaults.paceLevel
         widthMode = WidthMode(rawValue: defaults.string(forKey: "widthMode") ?? Defaults.widthMode.rawValue) ?? Defaults.widthMode
+        showUptime = defaults.bool(forKey: "showUptime")
+        fontSize = FontSize(rawValue: defaults.integer(forKey: "fontSize")) ?? Defaults.fontSize
+        labelCase = LabelCase(rawValue: defaults.string(forKey: "labelCase") ?? Defaults.labelCase.rawValue) ?? Defaults.labelCase
         
         // We'll set launchAtLogin in checkLaunchAtLoginStatus() instead
         
@@ -140,10 +193,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for (level, strings) in widestStrings {
             widestWidths[level] = [:]
             for (charCount, widestString) in strings {
-                if let button = statusItem?.button {
-                    let width = ceil(estimateTextWidth(widestString, font: button.font ?? .systemFont(ofSize: NSFont.systemFontSize))) + 1
-                    widestWidths[level]?[charCount] = width
-                }
+                let width = ceil(estimateTextWidth(widestString, font: currentFont())) + 1
+                widestWidths[level]?[charCount] = width
             }
         }
     }
@@ -168,6 +219,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(createDetailMenuItem())
         menu.addItem(createPaceMenuItem())
         menu.addItem(createWidthModeItem())
+        menu.addItem(createFontSizeMenuItem())
+        menu.addItem(createLabelCaseMenuItem())
+        menu.addItem(createUptimeMenuItem())
         menu.addItem(NSMenuItem.separator())
         menu.addItem(createLaunchAtLoginMenuItem())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
@@ -231,6 +285,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return menuItem
     }
     
+    private func createFontSizeMenuItem() -> NSMenuItem {
+        let menuItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        for size in FontSize.allCases {
+            let item = createStyledMenuItem(
+                title: size.label,
+                suffix: "\(size.pointSize)pt",
+                action: #selector(changeFontSize),
+                value: size.rawValue,
+                isSelected: size == fontSize
+            )
+            submenu.addItem(item)
+        }
+
+        menuItem.submenu = submenu
+        return menuItem
+    }
+
+    private func createLabelCaseMenuItem() -> NSMenuItem {
+        let menuItem = NSMenuItem(title: "Case", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        for mode in LabelCase.allCases {
+            let label = mode == .uppercase ? "Uppercase" : "Lowercase"
+            let item = NSMenuItem(title: label, action: #selector(changeLabelCase), keyEquivalent: "")
+            item.representedObject = mode.rawValue
+            item.target = self
+            item.state = mode == labelCase ? .on : .off
+            submenu.addItem(item)
+        }
+
+        menuItem.submenu = submenu
+        return menuItem
+    }
+
+    private func createUptimeMenuItem() -> NSMenuItem {
+        let menuItem = NSMenuItem(title: "Uptime", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        let item = NSMenuItem(title: "Show in Menubar", action: #selector(toggleShowUptime), keyEquivalent: "")
+        item.target = self
+        item.state = showUptime ? .on : .off
+        submenu.addItem(item)
+
+        menuItem.submenu = submenu
+        return menuItem
+    }
+
     private func createLaunchAtLoginMenuItem() -> NSMenuItem {
         let menuItem = NSMenuItem(title: "Launch", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -290,18 +393,74 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuStates(sender.menu, selectedValue: rawValue)
     }
     
+    @objc private func changeFontSize(sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? Int,
+              let newSize = FontSize(rawValue: rawValue) else { return }
+
+        fontSize = newSize
+        UserDefaults.standard.set(rawValue, forKey: "fontSize")
+        calculateWidestWidths()
+        updateWattageDisplay()
+        updateMenuStates(sender.menu, selectedValue: rawValue)
+    }
+
+    @objc private func changeLabelCase(sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let newCase = LabelCase(rawValue: rawValue) else { return }
+
+        labelCase = newCase
+        UserDefaults.standard.set(rawValue, forKey: "labelCase")
+        updateWattageDisplay()
+        updateMenuStates(sender.menu, selectedValue: rawValue)
+    }
+
+    @objc private func toggleShowUptime(sender: NSMenuItem) {
+        showUptime = !showUptime
+        UserDefaults.standard.set(showUptime, forKey: "showUptime")
+        sender.state = showUptime ? .on : .off
+        updateWattageDisplay()
+    }
+
     // MARK: Display Updates
     
+    private func currentFont() -> NSFont {
+        return NSFont.systemFont(ofSize: fontSize.pointSize)
+    }
+
     private func updateWattageDisplay() {
         let formatString = detailLevelFormatString()
         guard let button = statusItem?.button else { return }
-        
+
         let wattage = PowerMonitor.shared.wattage
         let wattageText = String(format: formatString, wattage)
-        button.title = wattageText
-        
-        if widthMode == .fixed {
+        let displayText = showUptime ? "\(wattageText) \(uptimeString())" : wattageText
+
+        let attrs: [NSAttributedString.Key: Any] = [.font: currentFont()]
+        button.attributedTitle = NSAttributedString(string: displayText, attributes: attrs)
+
+        if widthMode == .fixed && !showUptime {
             updateFixedWidth(for: wattageText, wattage: wattage)
+        } else if showUptime {
+            statusItem?.length = NSStatusItem.variableLength
+        }
+    }
+
+    private func uptimeString() -> String {
+        let seconds = Int(ProcessInfo.processInfo.systemUptime)
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        let up = labelCase == .uppercase
+        let d = up ? "D" : "d"
+        let h = up ? "H" : "h"
+        let m = up ? "M" : "m"
+        if hours >= 24 {
+            let days = hours / 24
+            let remainingHours = hours % 24
+            return "\(days)\(d)\(remainingHours)\(h)"
+        } else if hours > 0 {
+            return "\(hours)\(h)\(minutes)\(m)"
+        } else {
+            return "\(minutes)\(m)"
         }
     }
     
@@ -405,10 +564,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func detailLevelFormatString() -> String {
+        let w = labelCase == .uppercase ? "W" : "w"
         switch detailLevel {
-        case .low: return "%.0fW"
-        case .medium: return "%.1fW"
-        case .high: return "%.2fW"
+        case .low: return "%.0f\(w)"
+        case .medium: return "%.1f\(w)"
+        case .high: return "%.2f\(w)"
         }
     }
     
