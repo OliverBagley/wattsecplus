@@ -12,8 +12,12 @@ Display macOS power usage (wattage) in the menu bar
 
 ## Differences in this fork
 
-Minimal changes to include an optional Uptime display and some customistion on fontsize and case. 
-All credit to beutton for the original app.
+This fork adds a few minimal, optional enhancements:
+
+- **Uptime display** in the menu bar  
+- **Text customization** options for font size and letter case
+
+All credit for the original app goes to [beutton](https://github.com/beutton/wattsec).
 
 ## Installation
 
