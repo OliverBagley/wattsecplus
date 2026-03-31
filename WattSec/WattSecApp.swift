@@ -131,6 +131,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var highWattageTimer: Timer?
     // RunLoop source for IOKit power-source change notifications
     private var powerSourceRunLoopSource: CFRunLoopSource?
+    private var statusItemWatcherTimer: Timer?
     
     // MARK: Application Lifecycle
     
@@ -141,6 +142,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bindToPowerMonitor()
         PowerMonitor.shared.fetchWattage()
         checkLaunchAtLoginStatus()
+        startStatusItemWatcher()
         // Register for power-source change notifications so battery UI updates immediately
         let ctx = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         if let src = IOPSNotificationCreateRunLoopSource({ context in
@@ -160,9 +162,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Cancel subscription to prevent memory leaks
         wattageSubscription?.cancel()
         highWattageTimer?.invalidate()
+        statusItemWatcherTimer?.invalidate()
         if let src = powerSourceRunLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), src, CFRunLoopMode.defaultMode)
             powerSourceRunLoopSource = nil
+        }
+    }
+
+    private func startStatusItemWatcher() {
+        // Start a periodic check to detect when the user has removed the app's
+        // status items from the menubar (by Command-drag). When all items are
+        // removed we terminate the app so a relaunch will recreate them.
+        statusItemWatcherTimer?.invalidate()
+        statusItemWatcherTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.checkStatusItemsPresence()
+            }
+        }
+    }
+
+    private func checkStatusItemsPresence() {
+        // Consider an item removed if its button is nil or its button's window is gone.
+        let wattagePresent = statusItemWattage?.button != nil && statusItemWattage?.button?.window != nil
+        let batteryPresent = statusItemBattery?.button != nil && statusItemBattery?.button?.window != nil
+        let uptimePresent = statusItemUptime?.button != nil && statusItemUptime?.button?.window != nil
+
+        // If none of the status item buttons are present, assume the user removed
+        // the menubar items and quit so a relaunch recreates them.
+        if !wattagePresent && !batteryPresent && !uptimePresent {
+            NSApplication.shared.terminate(nil)
         }
     }
 
@@ -255,24 +283,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupMenuBar() {
         // Create three status items so the user can reorder them independently
         statusItemWattage = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItemBattery = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItemUptime = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Create only the primary wattage item here; secondary items will be
+        // created on-demand so they can be fully removed from the status bar
+        // (avoids ghost/empty slots when grouping).
+        statusItemBattery = nil
+        statusItemUptime = nil
 
-        guard let wattButton = statusItemWattage?.button,
-              let battButton = statusItemBattery?.button,
-              let upButton = statusItemUptime?.button else {
-            print("Failed to create status items. Terminating app.")
+        guard let wattButton = statusItemWattage?.button else {
+            print("Failed to create primary status item. Terminating app.")
             NSApplication.shared.terminate(self)
             return
         }
 
-        // All buttons open the same menu; wattage item hosts the menu object
+        // Primary button hosts the menu; secondary items are created on-demand
         wattButton.action = #selector(showMenu)
         wattButton.target = self
-        battButton.action = #selector(showMenu)
-        battButton.target = self
-        upButton.action = #selector(showMenu)
-        upButton.target = self
 
         let menu = NSMenu()
         menu.addItem(createDetailMenuItem())
@@ -493,7 +518,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         switch newMode {
         case .dynamic:
-            statusItem?.length = NSStatusItem.variableLength
+            statusItemWattage?.length = NSStatusItem.variableLength
             highWattageTimer?.invalidate()
             highWattageTimer = nil
             highWattageTimestamp = nil
@@ -632,12 +657,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 wBtn.attributedTitle = result
                 wBtn.isHidden = false
             }
-
-            // Hide the other status item buttons while grouped
-            statusItemBattery?.button?.attributedTitle = NSAttributedString(string: "", attributes: attrs)
-            statusItemBattery?.button?.isHidden = true
-            statusItemUptime?.button?.attributedTitle = NSAttributedString(string: "", attributes: attrs)
-            statusItemUptime?.button?.isHidden = true
+            // Remove secondary status items entirely while grouped to avoid
+            // empty/ghost items in the menubar.
+            removeBatteryStatusItemIfNeeded()
+            removeUptimeStatusItemIfNeeded()
         } else {
             // Separate items mode
             if let wBtn = statusItemWattage?.button {
@@ -646,6 +669,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 wBtn.isHidden = false
             }
 
+            // Ensure secondary items exist when using separate mode
+            ensureBatteryStatusItemIfNeeded()
             if let bBtn = statusItemBattery?.button {
                 if showBattery, let bAttr = batteryAttributedString() {
                     // simple single-space spacer (system controls inter-item spacing)
@@ -659,6 +684,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
+            ensureUptimeStatusItemIfNeeded()
             if let uBtn = statusItemUptime?.button {
                 if showUptime {
                     let upAttr = uptimeAttributedString()
@@ -676,6 +702,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             updateFixedWidth(for: wattageText, wattage: wattage)
         } else if showUptime {
             statusItemWattage?.length = NSStatusItem.variableLength
+        }
+    }
+
+    // MARK: Secondary status item management
+
+    private func ensureBatteryStatusItemIfNeeded() {
+        guard !groupStatusItems, showBattery else { return }
+        if statusItemBattery == nil {
+            statusItemBattery = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            if let battBtn = statusItemBattery?.button {
+                battBtn.action = #selector(showMenu)
+                battBtn.target = self
+            }
+        }
+    }
+
+    private func ensureUptimeStatusItemIfNeeded() {
+        guard !groupStatusItems, showUptime else { return }
+        if statusItemUptime == nil {
+            statusItemUptime = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            if let upBtn = statusItemUptime?.button {
+                upBtn.action = #selector(showMenu)
+                upBtn.target = self
+            }
+        }
+    }
+
+    private func removeBatteryStatusItemIfNeeded() {
+        if let item = statusItemBattery {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItemBattery = nil
+        }
+    }
+
+    private func removeUptimeStatusItemIfNeeded() {
+        if let item = statusItemUptime {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItemUptime = nil
         }
     }
 
@@ -906,7 +970,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if highWattageTimestamp == nil {
                 highWattageTimestamp = Date()
                 if let width = widthsForLevel[largestCharCount] {
-                    statusItemWattage?.length = width
+                        statusItemWattage?.length = width
                 }
                 
                 // Cancel any existing timer
@@ -926,7 +990,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     // Scale back after timeout period
                     highWattageTimestamp = nil
                     if let width = widthsForLevel[targetCharCount] {
-                        statusItem?.length = width
+                            statusItemWattage?.length = width
                     }
                     
                     // Cancel any existing timer
