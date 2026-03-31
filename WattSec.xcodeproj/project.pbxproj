@@ -144,6 +144,7 @@
 			files = (
 				A7B42CF12F79C157007F1811 /* WattSecApp.swift in Sources */,
 				A7B42CF22F79C157007F1811 /* SMC.swift in Sources */,
+                
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
