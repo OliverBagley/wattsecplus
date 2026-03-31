@@ -30,14 +30,32 @@ brew install wattsec
 
 Alternatively, you can download the latest release [here](https://github.com/beutton/wattsec/releases/latest).
 
-## Compile
+## Build
+
+No Xcode project required — `build.sh` compiles directly with `swiftc` and assembles the `.app` bundle. Requires Xcode or the Command Line Tools.
 
 ```bash
 git clone https://github.com/beutton/wattsec.git
 cd wattsec
 ./build.sh
-open dist/WattSec.app
+open dist/WattSecPlus.app
 ```
+
+By default the build targets your machine's native architecture (arm64 on Apple Silicon, x86_64 on Intel), which is faster and produces a smaller binary. To build a universal binary for distribution:
+
+```bash
+./build.sh --universal
+```
+
+Full options:
+
+| Flag | Description |
+|---|---|
+| `-v, --version VERSION` | Override version (default: `VERSION` file) |
+| `-u, --universal` | Build universal binary (arm64 + x86_64) |
+| `-d, --create-dmg` | Package into a DMG |
+| `-s, --sign ID` | Code sign with a Developer ID |
+| `-k, --keychain PROFILE` | Keychain profile for notarization (used with `--sign`) |
 
 ## Settings
 

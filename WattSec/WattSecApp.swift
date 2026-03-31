@@ -11,18 +11,6 @@ import Foundation
 import Darwin
 import ServiceManagement
 import IOKit.ps
-import SwiftUI
-
-// MARK: - Main App
-
-@main
-struct WattSecApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
-    var body: some Scene {
-        Settings { EmptyView() }
-    }
-}
 
 // MARK: - Enums
 
@@ -125,20 +113,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var groupStatusItems: Bool = true
     
     
-    // New properties for fixed width mode
+    // Fixed width mode state
     private var widestWidths: [DetailLevel: [Int: CGFloat]] = [:]
     private var highWattageTimestamp: Date?
     private var highWattageTimer: Timer?
     // RunLoop source for IOKit power-source change notifications
     private var powerSourceRunLoopSource: CFRunLoopSource?
     private var statusItemWatcherTimer: Timer?
+
+    // Battery state — populated once at launch and then only when IOKit fires a
+    // power-source-change notification. Avoids CF object churn on every timer tick.
+    private struct BatteryState {
+        var percent: Int
+        var isCharging: Bool
+        var isPluggedIn: Bool  // plugged but not actively charging (idle/full)
+    }
+    private var cachedBattery: BatteryState?
     
     // MARK: Application Lifecycle
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadUserPreferences()
         setupMenuBar()
-        calculateWidestWidths()
+        if widthMode == .fixed { calculateWidestWidths() }
+        refreshBatteryCache()  // prime the cache before first display
         bindToPowerMonitor()
         PowerMonitor.shared.fetchWattage()
         checkLaunchAtLoginStatus()
@@ -170,14 +168,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startStatusItemWatcher() {
-        // Start a periodic check to detect when the user has removed the app's
-        // status items from the menubar (by Command-drag). When all items are
-        // removed we terminate the app so a relaunch will recreate them.
+        // Periodically check if the user Command-dragged all status items off the
+        // menubar. 4 s is imperceptible to the user but far less wasteful than 1 s.
+        // The timer is already scheduled on the main run loop, so no extra dispatch needed.
         statusItemWatcherTimer?.invalidate()
-        statusItemWatcherTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.checkStatusItemsPresence()
-            }
+        statusItemWatcherTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
+            self?.checkStatusItemsPresence()
         }
     }
 
@@ -195,8 +191,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func powerSourceChanged() {
-        // Called when the system power sources change (plug/unplug). Refresh display.
+        // Called when the system power sources change (plug/unplug).
+        // Refresh the battery cache first so the display reflects the new state.
+        refreshBatteryCache()
         updateWattageDisplay()
+    }
+
+    /// Reads the current battery state from IOKit and stores it in `cachedBattery`.
+    /// Called once at launch and subsequently only when IOKit fires a change notification —
+    /// never on every timer tick.
+    private func refreshBatteryCache() {
+        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let sourcesRef = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() else {
+            cachedBattery = nil
+            return
+        }
+        let sources = sourcesRef as NSArray
+        for ps in sources {
+            let psRef = ps as CFTypeRef
+            guard let desc = IOPSGetPowerSourceDescription(snapshot, psRef)?
+                    .takeUnretainedValue() as? [String: Any] else { continue }
+
+            // Percent: prefer current/max ratio, fall back to raw current value
+            let percent: Int
+            if let cur = desc[kIOPSCurrentCapacityKey as String] as? Int,
+               let max = desc[kIOPSMaxCapacityKey as String] as? Int, max > 0 {
+                percent = Int(round(Double(cur) / Double(max) * 100.0))
+            } else if let cur = desc[kIOPSCurrentCapacityKey as String] as? Int {
+                percent = cur
+            } else {
+                continue
+            }
+
+            let isCharging: Bool
+            if let charging = desc[kIOPSIsChargingKey as String] as? Bool {
+                isCharging = charging
+            } else {
+                isCharging = (desc[kIOPSPowerSourceStateKey as String] as? String) == (kIOPSACPowerValue as String)
+            }
+            let isPluggedIn = (desc[kIOPSPowerSourceStateKey as String] as? String) == (kIOPSACPowerValue as String)
+
+            cachedBattery = BatteryState(percent: percent, isCharging: isCharging, isPluggedIn: isPluggedIn)
+            return  // use first source only
+        }
+        cachedBattery = nil
     }
     
     // MARK: User Preferences
@@ -428,11 +466,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         showMinutesItem.state = uptimeShowMinutes ? .on : .off
         submenu.addItem(showMinutesItem)
 
-        // Battery toggle moved to top-level menu
-
-        let separator = NSMenuItem.separator()
-        submenu.addItem(separator)
-
         menuItem.submenu = submenu
         return menuItem
     }
@@ -538,6 +571,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
               let newSize = FontSize(rawValue: rawValue) else { return }
 
         fontSize = newSize
+        _cachedFont = nil  // invalidate font cache
+        _cachedDotImages = [:]  // dot size depends on font, so invalidate too
         UserDefaults.standard.set(rawValue, forKey: "fontSize")
         calculateWidestWidths()
         updateWattageDisplay()
@@ -586,8 +621,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Display Updates
     
+    // Cached so repeated calls within the same update tick don't reallocate.
+    // Invalidated in changeFontSize(_:) whenever the user picks a new size.
+    private var _cachedFont: NSFont?
+    // Battery dot images keyed by color (two possible: orange = charging, white = plugged idle).
+    // Invalidated when font size changes (dot diameter is font-relative).
+    private var _cachedDotImages: [NSColor: NSImage] = [:]
     private func currentFont() -> NSFont {
-        return NSFont.systemFont(ofSize: fontSize.pointSize)
+        if let f = _cachedFont { return f }
+        let f = NSFont.systemFont(ofSize: fontSize.pointSize)
+        _cachedFont = f
+        return f
     }
 
     private func wattageAttributedString(from wattageText: String) -> NSAttributedString {
@@ -615,8 +659,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateWattageDisplay() {
         let formatString = detailLevelFormatString()
-        let wattage = PowerMonitor.shared.wattage
-        let wattageText = String(format: formatString, wattage)
+        let monitor = PowerMonitor.shared
+        // Show an em-dash when the SMC connection failed so the user knows the
+        // read is unavailable rather than inferring that the Mac uses zero power.
+        let wattageText = monitor.lastReadFailed ? "—" : String(format: formatString, monitor.wattage)
 
         let attrs: [NSAttributedString.Key: Any] = [.font: currentFont()]
 
@@ -699,7 +745,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Width adjustments apply to the wattage item (primary)
         if widthMode == .fixed && !showUptime {
-            updateFixedWidth(for: wattageText, wattage: wattage)
+            updateFixedWidth(for: wattageText, wattage: monitor.wattage)
         } else if showUptime {
             statusItemWattage?.length = NSStatusItem.variableLength
         }
@@ -743,213 +789,109 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func uptimeString() -> String {
-        // Prefer using kernel boottime (like the `uptime` command) for accuracy
+    /// Returns (days, remainingHours, minutes) from kernel boot time via sysctl.
+    private func uptimeComponents() -> (days: Int, hours: Int, minutes: Int) {
         var mib: [Int32] = [CTL_KERN, KERN_BOOTTIME]
         var bootTime = timeval()
         var size = MemoryLayout<timeval>.size
-
-        let result = mib.withUnsafeMutableBufferPointer { mibPtr -> Int32 in
-            return sysctl(mibPtr.baseAddress, 2, &bootTime, &size, nil, 0)
-        }
+        let rc = mib.withUnsafeMutableBufferPointer { sysctl($0.baseAddress, 2, &bootTime, &size, nil, 0) }
 
         let uptimeSeconds: Int
-        if result == 0 {
+        if rc == 0 {
             var now = time_t()
             time(&now)
             uptimeSeconds = Int(now - bootTime.tv_sec)
         } else {
-            // Fallback if sysctl fails
             uptimeSeconds = Int(ProcessInfo.processInfo.systemUptime)
         }
 
         let totalMinutes = uptimeSeconds / 60
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        let days = hours / 24
-        let remainingHours = hours % 24
-
-        let up = labelCase == .uppercase
-        let d = up ? "D" : "d"
-        let h = up ? "H" : "h"
-        let m = up ? "M" : "m"
-        // Compact = no space; when compact is off we include a space
-        let sep = uptimeCompact ? "" : " "
-
-        if days > 0 {
-            // When showing days, omit minutes unless user enabled Show Minutes
-            if uptimeShowMinutes {
-                return "\(days)\(d)\(sep)\(remainingHours)\(h)\(sep)\(minutes)\(m)"
-            }
-            return "\(days)\(d)\(sep)\(remainingHours)\(h)"
-        } else if hours > 0 {
-            return "\(hours)\(h)\(sep)\(minutes)\(m)"
-        } else {
-            return "\(minutes)\(m)"
-        }
+        let hours        = totalMinutes / 60
+        let minutes      = totalMinutes % 60
+        let days         = hours / 24
+        return (days: days, hours: hours % 24, minutes: minutes)
     }
 
     private func uptimeAttributedString() -> NSAttributedString {
-        let attrs: [NSAttributedString.Key: Any] = [.font: currentFont()]
-        let smallFont = NSFont.systemFont(ofSize: currentFont().pointSize * 0.75)
-        let smallAttrs: [NSAttributedString.Key: Any] = [.font: smallFont]
+        let font      = currentFont()  // single call — used for both attrs and smallFont derivation
+        let attrs     : [NSAttributedString.Key: Any] = [.font: font]
+        let smallAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: font.pointSize * 0.75)]
 
-        // Compute raw components using uptimeString logic
-        var mib: [Int32] = [CTL_KERN, KERN_BOOTTIME]
-        var bootTime = timeval()
-        var size = MemoryLayout<timeval>.size
+        let (days, remainingHours, minutes) = uptimeComponents()
 
-        let result = mib.withUnsafeMutableBufferPointer { mibPtr -> Int32 in
-            return sysctl(mibPtr.baseAddress, 2, &bootTime, &size, nil, 0)
-        }
-
-        let uptimeSeconds: Int
-        if result == 0 {
-            var now = time_t()
-            time(&now)
-            uptimeSeconds = Int(now - bootTime.tv_sec)
-        } else {
-            uptimeSeconds = Int(ProcessInfo.processInfo.systemUptime)
-        }
-
-        let totalMinutes = uptimeSeconds / 60
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        let days = hours / 24
-        let remainingHours = hours % 24
-
-        let up = labelCase == .uppercase
-        let d = up ? "D" : "d"
-        let h = up ? "H" : "h"
-        let m = up ? "M" : "m"
+        let up  = labelCase == .uppercase
+        let d   = up ? "D" : "d"
+        let h   = up ? "H" : "h"
+        let m   = up ? "M" : "m"
         let sep = uptimeCompact ? "" : " "
 
-        let out = NSMutableAttributedString()
-
-        if days > 0 {
-            // days
-            out.append(NSAttributedString(string: "\(days)", attributes: attrs))
-            out.append(NSAttributedString(string: d, attributes: smallAttrs))
-            if !uptimeCompact {
-                out.append(NSAttributedString(string: sep, attributes: attrs))
-            }
-            // hours
-            out.append(NSAttributedString(string: "\(remainingHours)", attributes: attrs))
-            out.append(NSAttributedString(string: h, attributes: smallAttrs))
-            if uptimeShowMinutes {
-                if !uptimeCompact { out.append(NSAttributedString(string: sep, attributes: attrs)) }
-                out.append(NSAttributedString(string: "\(minutes)", attributes: attrs))
-                out.append(NSAttributedString(string: m, attributes: smallAttrs))
-            }
-        } else if hours > 0 {
-            out.append(NSAttributedString(string: "\(hours)", attributes: attrs))
-            out.append(NSAttributedString(string: h, attributes: smallAttrs))
-            if !uptimeCompact { out.append(NSAttributedString(string: sep, attributes: attrs)) }
-            out.append(NSAttributedString(string: "\(minutes)", attributes: attrs))
-            out.append(NSAttributedString(string: m, attributes: smallAttrs))
-        } else {
-            out.append(NSAttributedString(string: "\(minutes)", attributes: attrs))
-            out.append(NSAttributedString(string: m, attributes: smallAttrs))
+        // Helper to append a number + unit pair
+        func append(_ out: NSMutableAttributedString, number: Int, unit: String) {
+            out.append(NSAttributedString(string: "\(number)", attributes: attrs))
+            out.append(NSAttributedString(string: unit,        attributes: smallAttrs))
         }
 
+        let out = NSMutableAttributedString()
+        if days > 0 {
+            append(out, number: days,           unit: d)
+            if !uptimeCompact { out.append(NSAttributedString(string: sep, attributes: attrs)) }
+            append(out, number: remainingHours, unit: h)
+            if uptimeShowMinutes {
+                if !uptimeCompact { out.append(NSAttributedString(string: sep, attributes: attrs)) }
+                append(out, number: minutes, unit: m)
+            }
+        } else if remainingHours > 0 {
+            append(out, number: remainingHours, unit: h)
+            if !uptimeCompact { out.append(NSAttributedString(string: sep, attributes: attrs)) }
+            append(out, number: minutes, unit: m)
+        } else {
+            append(out, number: minutes, unit: m)
+        }
         return out
     }
 
     private func batteryAttributedString() -> NSAttributedString? {
-        // Native IOKit power source API
-        let attrs: [NSAttributedString.Key: Any] = [.font: currentFont()]
+        // Read from the cache populated by refreshBatteryCache() — no IOKit calls here.
+        guard let battery = cachedBattery else { return nil }
 
-        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else { return nil }
-        guard let sourcesRef = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() else { return nil }
+        let font = currentFont()
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        let result = NSMutableAttributedString()
 
-        let sources = sourcesRef as NSArray
-        if sources.count == 0 { return nil }
-
-        // Prefer the first power source
-        for ps in sources {
-            let psRef = ps as CFTypeRef
-            if let descRef = IOPSGetPowerSourceDescription(snapshot, psRef)?.takeUnretainedValue() as? [String: Any] {
-                // Current capacity may be provided as either a percent or as current/max
-                var pctText: String? = nil
-                if let cur = descRef[kIOPSCurrentCapacityKey as String] as? Int,
-                   let max = descRef[kIOPSMaxCapacityKey as String] as? Int, max > 0 {
-                    let pct = Int(round(Double(cur) / Double(max) * 100.0))
-                    pctText = "\(pct)%"
-                } else if let cur = descRef[kIOPSCurrentCapacityKey as String] as? Int {
-                    pctText = "\(cur)%"
+        // Dot: orange = charging, white-translucent = plugged but idle, none = on battery
+        let dotColor: NSColor? = battery.isCharging ? .systemOrange
+                               : battery.isPluggedIn ? .white.withAlphaComponent(0.7)
+                               : nil
+        if let color = dotColor {
+            let dotDiameter = max(1.0, font.pointSize * 0.45)
+            let dotImage: NSImage
+            if let cached = _cachedDotImages[color] {
+                dotImage = cached
+            } else {
+                let img = NSImage(size: NSSize(width: dotDiameter, height: dotDiameter), flipped: false) { rect in
+                    color.setFill()
+                    NSBezierPath(ovalIn: rect).fill()
+                    return true
                 }
-
-                // Charging detection
-                var isCharging = false
-                if let charging = descRef[kIOPSIsChargingKey as String] as? Bool {
-                    isCharging = charging
-                } else if let state = descRef[kIOPSPowerSourceStateKey as String] as? String {
-                    isCharging = (state == kIOPSACPowerValue as String)
-                }
-
-                if let pct = pctText {
-                    let result = NSMutableAttributedString()
-
-                    // Determine dot state: none (unplugged), charging (orange), plugged idle (white with opacity)
-                    var showDot = false
-                    var dotColor: NSColor = .clear
-                    if isCharging {
-                        showDot = true
-                        dotColor = NSColor.systemOrange
-                    } else if let state = descRef[kIOPSPowerSourceStateKey as String] as? String,
-                              state == kIOPSACPowerValue as String {
-                        // Plugged in but not charging
-                        showDot = true
-                        dotColor = NSColor.white.withAlphaComponent(0.7)
-                    }
-
-                    if showDot {
-                        let dotDiameter = max(1.0, currentFont().pointSize * 0.45)
-                        let dotImage = NSImage(size: NSSize(width: dotDiameter, height: dotDiameter), flipped: false) { rect in
-                            dotColor.setFill()
-                            let path = NSBezierPath(ovalIn: rect)
-                            path.fill()
-                            return true
-                        }
-                        let attachment = NSTextAttachment()
-                        attachment.image = dotImage
-                        // Center the dot vertically relative to the font cap height
-                        let yOffset = (currentFont().capHeight - dotDiameter) / 2.0
-                        attachment.bounds = CGRect(x: 0, y: yOffset, width: dotDiameter, height: dotDiameter)
-                        result.append(NSAttributedString(attachment: attachment))
-                        // small spacer after dot
-                        result.append(NSAttributedString(string: " ", attributes: attrs))
-                    }
-
-                    // Split number and % so we can render '%' smaller in lowercase mode
-                    let numberPart: String
-                    let percentPart: String?
-                    if pct.hasSuffix("%") {
-                        numberPart = String(pct.dropLast())
-                        percentPart = "%"
-                    } else {
-                        numberPart = pct
-                        percentPart = nil
-                    }
-
-                    // Main number uses the current font
-                    let numberAttr = NSAttributedString(string: numberPart, attributes: attrs)
-                    result.append(numberAttr)
-
-                    // Percent sign smaller when lowercase mode is active
-                    if let pctChar = percentPart {
-                        let pctFont: NSFont = (labelCase == .lowercase) ? NSFont.systemFont(ofSize: currentFont().pointSize * 0.7) : currentFont()
-                        let pctAttrs: [NSAttributedString.Key: Any] = [.font: pctFont]
-                        let pctAttr = NSAttributedString(string: pctChar, attributes: pctAttrs)
-                        result.append(pctAttr)
-                    }
-
-                    return result
-                }
+                _cachedDotImages[color] = img
+                dotImage = img
             }
+            let attachment = NSTextAttachment()
+            attachment.image = dotImage
+            let yOffset = (font.capHeight - dotDiameter) / 2.0
+            attachment.bounds = CGRect(x: 0, y: yOffset, width: dotDiameter, height: dotDiameter)
+            result.append(NSAttributedString(attachment: attachment))
+            result.append(NSAttributedString(string: " ", attributes: attrs))
         }
 
-        return nil
+        // Number part at full size; % sign smaller in lowercase mode
+        result.append(NSAttributedString(string: "\(battery.percent)", attributes: attrs))
+        let pctFont = labelCase == .lowercase
+            ? NSFont.systemFont(ofSize: font.pointSize * 0.7)
+            : font
+        result.append(NSAttributedString(string: "%", attributes: [.font: pctFont]))
+
+        return result
     }
     
     private func updateFixedWidth(for wattageText: String, wattage: Double) {
@@ -1067,18 +1009,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func updateMenuStates(_ menu: NSMenu?, selectedValue: Any) {
         menu?.items.forEach { item in
-            if item.representedObject as AnyObject? === selectedValue as AnyObject? {
-                item.state = .on
-            } else {
-                item.state = .off
+            let matches: Bool
+            switch (item.representedObject, selectedValue) {
+            case (let a as Int, let b as Int):       matches = a == b
+            case (let a as String, let b as String): matches = a == b
+            default:                                 matches = false
             }
+            item.state = matches ? .on : .off
         }
     }
     
     private func bindToPowerMonitor() {
+        // debounce already delivers on DispatchQueue.main — no extra receive(on:) needed
         wattageSubscription = PowerMonitor.shared.$wattage
             .debounce(for: .seconds(0.1), scheduler: DispatchQueue.main)
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateWattageDisplay()
             }
@@ -1154,41 +1098,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - Power Monitor
 
 class PowerMonitor: ObservableObject {
-    
+
     static let shared = PowerMonitor()
-    
+
+    /// Latest wattage reading. Always >= 0. Observe via Combine ($wattage).
     @Published var wattage: Double = 0.0
-    
-    private var timer: AnyCancellable?
+    /// True when the last SMC read returned nil (connection issue, not genuine zero draw).
+    @Published var lastReadFailed: Bool = false
+
+    private var dispatchTimer: DispatchSourceTimer?
     private var timerInterval: TimeInterval
-    
+    // Dedicated utility-priority queue; SMC reads are fast but shouldn't touch the main thread.
+    private let smcQueue = DispatchQueue(label: "com.oliverbagley.WattSecPlus.smc", qos: .utility)
+
     private init() {
-        timerInterval = Double(PaceLevel.medium.rawValue)
+        timerInterval = Double(PaceLevel.fast.rawValue)
         setupTimer()
     }
-    
+
     func updatePace(_ pace: PaceLevel) {
         let newInterval = Double(pace.rawValue)
         guard newInterval != timerInterval else { return }
         timerInterval = newInterval
         setupTimer()
     }
-    
+
+    /// Trigger an immediate one-shot read (called once on launch).
     func fetchWattage() {
-        DispatchQueue.global(qos: .background).async { [weak self] in
-            let wattageValue = SMC.shared.getValue("PSTR") ?? 0.0
-            DispatchQueue.main.async {
-                self?.wattage = wattageValue
-            }
+        smcQueue.async { [weak self] in
+            self?.readAndPublish()
         }
     }
-    
+
+    private func readAndPublish() {
+        // SMC occasionally returns small negative values during charge handoffs — clamp to zero.
+        let raw = SMC.shared.getValue("PSTR")
+        let value = raw.map { max(0.0, $0) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.lastReadFailed = (raw == nil)
+            self.wattage = value ?? 0.0
+        }
+    }
+
     private func setupTimer() {
-        timer?.cancel()
-        timer = Timer.publish(every: timerInterval, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.fetchWattage()
-            }
+        dispatchTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: smcQueue)
+        // Fire immediately, then repeat at the chosen pace interval.
+        timer.schedule(deadline: .now(), repeating: timerInterval, leeway: .milliseconds(200))
+        timer.setEventHandler { [weak self] in
+            self?.readAndPublish()
+        }
+        timer.resume()
+        dispatchTimer = timer
     }
 }

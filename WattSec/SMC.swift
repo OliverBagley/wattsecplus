@@ -82,10 +82,8 @@ extension FourCharCode {
     }
     
     func toString() -> String {
-        return String(describing: UnicodeScalar(self >> 24 & 0xff)!) +
-               String(describing: UnicodeScalar(self >> 16 & 0xff)!) +
-               String(describing: UnicodeScalar(self >> 8  & 0xff)!) +
-               String(describing: UnicodeScalar(self       & 0xff)!)
+        let bytes: [UInt32] = [self >> 24 & 0xff, self >> 16 & 0xff, self >> 8 & 0xff, self & 0xff]
+        return bytes.compactMap { UnicodeScalar($0) }.map { String($0) }.joined()
     }
 }
 
@@ -104,8 +102,8 @@ extension Float {
 public class SMC {
     public static let shared = SMC()
     private var conn: io_connect_t = 0
-    
-    public init() {
+
+    private init() {
         var result: kern_return_t
         var iterator: io_iterator_t = 0
         let device: io_object_t
