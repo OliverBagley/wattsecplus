@@ -1,0 +1,27 @@
+# WattSec+
+
+> Lightweight macOS menu bar app showing real-time power draw (watts), battery status, and system uptime. Fork of beutton/wattsec. Pure AppKit, no Xcode project — builds with `swiftc` via `build.sh`.
+
+## Key files
+
+- [README.md](README.md) — features, build instructions, settings reference
+- [CLAUDE.md](CLAUDE.md) — full architecture notes, design decisions, UserDefaults schema
+- [docs/SETUP.md](docs/SETUP.md) — prerequisites and build commands
+- [docs/USAGE.md](docs/USAGE.md) — all settings and menu bar interactions
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — how to add features, code conventions
+- [llms-full.txt](llms-full.txt) — consolidated code schema and architecture for LLMs
+
+## Source files
+
+- [WattSec/main.swift](WattSec/main.swift) — AppKit bootstrap
+- [WattSec/WattSecApp.swift](WattSec/WattSecApp.swift) — AppDelegate, PowerMonitor, all display logic
+- [WattSec/SettingsWindow.swift](WattSec/SettingsWindow.swift) — NSWindowController settings panel
+- [WattSec/SMC.swift](WattSec/SMC.swift) — IOKit SMC interface (PSTR key)
+- [WattSec/Info.plist](WattSec/Info.plist) — bundle metadata (__VERSION__ substituted at build time)
+- [WattSec/WattSec.entitlements](WattSec/WattSec.entitlements) — sandbox disabled, login items enabled
+- [build.sh](build.sh) — swiftc build script, no Xcode project needed
+- [VERSION](VERSION) — single-line version string
+
+## Architecture summary
+
+Single-process macOS agent (LSUIElement, no Dock icon). SMC polling on a background DispatchSourceTimer. Battery state cached from IOKit notifications (not polled). Up to three NSStatusItems (wattage, battery, uptime) — grouped into one attributed string or kept separate for Command-drag reordering. Settings persisted in UserDefaults. Launch at Login via SMAppService (macOS 13+). Minimum deployment target: macOS 13.0.

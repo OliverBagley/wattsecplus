@@ -111,8 +111,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var showBattery: Bool = Defaults.showBattery
     private var showDash: Bool = Defaults.showDash
     private var groupStatusItems: Bool = true
-    
-    
+    // Order of components in the grouped menu bar item and settings preview.
+    // Always contains exactly ["battery", "wattage", "uptime"] in some permutation.
+    var componentOrder: [String] = ["battery", "wattage", "uptime"]
+
     // Fixed width mode state
     private var widestWidths: [DetailLevel: [Int: CGFloat]] = [:]
     private var highWattageTimestamp: Date?
@@ -120,6 +122,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // RunLoop source for IOKit power-source change notifications
     private var powerSourceRunLoopSource: CFRunLoopSource?
     private var statusItemWatcherTimer: Timer?
+    private var settingsWindowController: SettingsWindowController?
 
     // Battery state — populated once at launch and then only when IOKit fires a
     // power-source-change notification. Avoids CF object churn on every timer tick.
@@ -254,7 +257,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "uptimeShowMinutes": Defaults.uptimeShowMinutes,
             "showBattery": Defaults.showBattery,
             "showDash": Defaults.showDash,
-            "groupStatusItems": true
+            "groupStatusItems": true,
+            "componentOrder": "battery,wattage,uptime"
         ])
 
         let currentVersion = 1
@@ -280,8 +284,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         showBattery = defaults.bool(forKey: "showBattery")
         showDash = defaults.bool(forKey: "showDash")
         groupStatusItems = defaults.bool(forKey: "groupStatusItems")
-        
-        
+        let rawOrder = (defaults.string(forKey: "componentOrder") ?? "battery,wattage,uptime")
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let allKeys = Set(["battery", "wattage", "uptime"])
+        if rawOrder.count == 3 && Set(rawOrder) == allKeys {
+            componentOrder = rawOrder
+        }
+
         // We'll set launchAtLogin in checkLaunchAtLoginStatus() instead
         
         PowerMonitor.shared.updatePace(paceLevel)
@@ -340,22 +350,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(createDetailMenuItem())
         menu.addItem(createPaceMenuItem())
-        menu.addItem(createWidthModeItem())
-        menu.addItem(createFontSizeMenuItem())
-        menu.addItem(createLabelCaseMenuItem())
-        menu.addItem(createGroupingMenuItem())
-        menu.addItem(createShowDashMenuItem())
-        // Battery toggle as a top-level menu item
-        menu.addItem(createBatteryMenuItem())
-        menu.addItem(createUptimeMenuItem())
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(createLaunchAtLoginMenuItem())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
         statusItemWattage?.menu = menu
     }
     
     private func createDetailMenuItem() -> NSMenuItem {
         let menuItem = NSMenuItem(title: "Detail", action: nil, keyEquivalent: "")
+        if let img = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil) {
+            img.isTemplate = true
+            menuItem.image = img
+        }
         let submenu = NSMenu()
         
         for level in DetailLevel.allCases {
@@ -376,6 +384,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func createPaceMenuItem() -> NSMenuItem {
         let menuItem = NSMenuItem(title: "Pace", action: nil, keyEquivalent: "")
+        if let img = NSImage(systemSymbolName: "timer", accessibilityDescription: nil) {
+            img.isTemplate = true
+            menuItem.image = img
+        }
         let submenu = NSMenu()
         
         for level in PaceLevel.allCases {
@@ -393,132 +405,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuItem.submenu = submenu
         return menuItem
     }
-    
-    private func createWidthModeItem() -> NSMenuItem {
-        let menuItem = NSMenuItem(title: "Width", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        
-        for mode in WidthMode.allCases {
-            let label = mode == .dynamic ? "Dynamic" : "Fixed"
-            let item = NSMenuItem(title: label, action: #selector(changeWidthMode), keyEquivalent: "")
-            item.representedObject = mode.rawValue
-            item.target = self
-            item.state = mode == widthMode ? .on : .off
-            submenu.addItem(item)
-        }
-        
-        menuItem.submenu = submenu
-        return menuItem
-    }
-    
-    private func createFontSizeMenuItem() -> NSMenuItem {
-        let menuItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-
-        for size in FontSize.allCases {
-            let item = createStyledMenuItem(
-                title: size.label,
-                suffix: "\(size.pointSize)pt",
-                action: #selector(changeFontSize),
-                value: size.rawValue,
-                isSelected: size == fontSize
-            )
-            submenu.addItem(item)
-        }
-
-        menuItem.submenu = submenu
-        return menuItem
-    }
-
-    private func createLabelCaseMenuItem() -> NSMenuItem {
-        let menuItem = NSMenuItem(title: "Case", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-
-        for mode in LabelCase.allCases {
-            let label = mode == .uppercase ? "Uppercase" : "Lowercase"
-            let item = NSMenuItem(title: label, action: #selector(changeLabelCase), keyEquivalent: "")
-            item.representedObject = mode.rawValue
-            item.target = self
-            item.state = mode == labelCase ? .on : .off
-            submenu.addItem(item)
-        }
-
-        menuItem.submenu = submenu
-        return menuItem
-    }
-
-    private func createUptimeMenuItem() -> NSMenuItem {
-        let menuItem = NSMenuItem(title: "Uptime", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-
-        let item = NSMenuItem(title: "Show in Menubar", action: #selector(toggleShowUptime), keyEquivalent: "")
-        item.target = self
-        item.state = showUptime ? .on : .off
-        submenu.addItem(item)
-
-        let compactItem = NSMenuItem(title: "Compact Uptime", action: #selector(toggleCompactUptime), keyEquivalent: "")
-        compactItem.target = self
-        compactItem.state = uptimeCompact ? .on : .off
-        submenu.addItem(compactItem)
-
-        let showMinutesItem = NSMenuItem(title: "Always Show Minutes", action: #selector(toggleShowMinutes), keyEquivalent: "")
-        showMinutesItem.target = self
-        showMinutesItem.state = uptimeShowMinutes ? .on : .off
-        submenu.addItem(showMinutesItem)
-
-        menuItem.submenu = submenu
-        return menuItem
-    }
-
-    private func createBatteryMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Show Battery", action: #selector(toggleShowBattery), keyEquivalent: "")
-        item.target = self
-        item.state = showBattery ? .on : .off
-        return item
-    }
-
-    private func createLaunchAtLoginMenuItem() -> NSMenuItem {
-        let menuItem = NSMenuItem(title: "Launch", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        
-        let item = NSMenuItem(title: "at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        item.target = self
-        item.state = launchAtLogin ? .on : .off
-        submenu.addItem(item)
-        
-        menuItem.submenu = submenu
-        return menuItem
-    }
-
-    private func createGroupingMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Group Items", action: #selector(toggleGroupItems), keyEquivalent: "")
-        item.target = self
-        item.state = groupStatusItems ? .on : .off
-        return item
-    }
-
-    private func createShowDashMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Show Dash", action: #selector(toggleShowDash), keyEquivalent: "")
-        item.target = self
-        item.state = showDash ? .on : .off
-        return item
-    }
-
-    @objc private func toggleShowDash(sender: NSMenuItem) {
-        showDash = !showDash
-        UserDefaults.standard.set(showDash, forKey: "showDash")
-        sender.state = showDash ? .on : .off
-        updateWattageDisplay()
-    }
-
-    @objc private func toggleGroupItems(sender: NSMenuItem) {
-        groupStatusItems = !groupStatusItems
-        UserDefaults.standard.set(groupStatusItems, forKey: "groupStatusItems")
-        sender.state = groupStatusItems ? .on : .off
-        updateWattageDisplay()
-    }
-
-    // spacingPx removed; single-space (or dash) separators used instead
     
     // MARK: Menu Actions
     
@@ -542,83 +428,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuStates(sender.menu, selectedValue: rawValue)
     }
     
-    @objc private func changeWidthMode(sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let newMode = WidthMode(rawValue: rawValue) else { return }
-        
-        widthMode = newMode
-        UserDefaults.standard.set(rawValue, forKey: "widthMode")
-        
-        switch newMode {
-        case .dynamic:
-            statusItemWattage?.length = NSStatusItem.variableLength
-            highWattageTimer?.invalidate()
-            highWattageTimer = nil
-            highWattageTimestamp = nil
-        case .fixed:
-            // Initialize widest widths if needed
-            if widestWidths.isEmpty {
-                calculateWidestWidths()
-            }
-        }
-        
-        updateWattageDisplay()
-        updateMenuStates(sender.menu, selectedValue: rawValue)
-    }
-    
-    @objc private func changeFontSize(sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? Int,
-              let newSize = FontSize(rawValue: rawValue) else { return }
-
-        fontSize = newSize
-        _cachedFont = nil  // invalidate font cache
-        _cachedDotImages = [:]  // dot size depends on font, so invalidate too
-        UserDefaults.standard.set(rawValue, forKey: "fontSize")
-        calculateWidestWidths()
-        updateWattageDisplay()
-        updateMenuStates(sender.menu, selectedValue: rawValue)
-    }
-
-    @objc private func changeLabelCase(sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let newCase = LabelCase(rawValue: rawValue) else { return }
-
-        labelCase = newCase
-        UserDefaults.standard.set(rawValue, forKey: "labelCase")
-        updateWattageDisplay()
-        updateMenuStates(sender.menu, selectedValue: rawValue)
-    }
-
-    @objc private func toggleShowUptime(sender: NSMenuItem) {
-        showUptime = !showUptime
-        UserDefaults.standard.set(showUptime, forKey: "showUptime")
-        sender.state = showUptime ? .on : .off
-        updateWattageDisplay()
-    }
-
-    @objc private func toggleCompactUptime(sender: NSMenuItem) {
-        // When compact is ON we remove the space between components.
-        uptimeCompact = !uptimeCompact
-        UserDefaults.standard.set(uptimeCompact, forKey: "uptimeCompact")
-        sender.state = uptimeCompact ? .on : .off
-        updateWattageDisplay()
-    }
-
-    @objc private func toggleShowMinutes(sender: NSMenuItem) {
-        // When enabled, always show minutes even when days are displayed
-        uptimeShowMinutes = !uptimeShowMinutes
-        UserDefaults.standard.set(uptimeShowMinutes, forKey: "uptimeShowMinutes")
-        sender.state = uptimeShowMinutes ? .on : .off
-        updateWattageDisplay()
-    }
-
-    @objc private func toggleShowBattery(sender: NSMenuItem) {
-        showBattery = !showBattery
-        UserDefaults.standard.set(showBattery, forKey: "showBattery")
-        sender.state = showBattery ? .on : .off
-        updateWattageDisplay()
-    }
-
     // MARK: Display Updates
     
     // Cached so repeated calls within the same update tick don't reallocate.
@@ -657,48 +466,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return NSAttributedString(string: wattageText, attributes: attrs)
     }
 
-    private func updateWattageDisplay() {
-        let formatString = detailLevelFormatString()
+    /// Builds the full grouped menu-bar attributed string in Battery · Wattage · Uptime
+    /// order, honouring all current display settings. Called by both
+    /// `updateWattageDisplay()` (grouped mode) and the settings-window live preview.
+    func buildMenuBarAttributedString() -> NSAttributedString {
         let monitor = PowerMonitor.shared
-        // Show an em-dash when the SMC connection failed so the user knows the
-        // read is unavailable rather than inferring that the Mac uses zero power.
-        let wattageText = monitor.lastReadFailed ? "—" : String(format: formatString, monitor.wattage)
+        let wattageText = monitor.lastReadFailed
+            ? "—" : String(format: detailLevelFormatString(), monitor.wattage)
+        let attrs: [NSAttributedString.Key: Any] = [.font: currentFont()]
+        let result = NSMutableAttributedString()
 
+        let sep: String
+        if uptimeCompact    { sep = ""    }
+        else if showDash    { sep = " - " }
+        else                { sep = " "   }
+
+        var components: [String: NSAttributedString] = [:]
+        components["wattage"] = wattageAttributedString(from: wattageText)
+        if showBattery, let bAttr = batteryAttributedString() { components["battery"] = bAttr }
+        if showUptime { components["uptime"] = uptimeAttributedString() }
+
+        var addedAny = false
+        for key in componentOrder {
+            guard let comp = components[key] else { continue }
+            if addedAny { result.append(NSAttributedString(string: sep, attributes: attrs)) }
+            result.append(comp)
+            addedAny = true
+        }
+        return result
+    }
+
+    /// Returns individual attributed strings for each currently-visible component,
+    /// keyed by name ("battery", "wattage", "uptime"). Used by SettingsWindow for
+    /// the live drag-preview chips.
+    func componentAttributedStrings() -> [String: NSAttributedString] {
+        let monitor = PowerMonitor.shared
+        let wattageText = monitor.lastReadFailed
+            ? "—" : String(format: detailLevelFormatString(), monitor.wattage)
+        var result: [String: NSAttributedString] = [:]
+        result["wattage"] = wattageAttributedString(from: wattageText)
+        if showBattery, let bAttr = batteryAttributedString() { result["battery"] = bAttr }
+        if showUptime { result["uptime"] = uptimeAttributedString() }
+        return result
+    }
+
+    private func updateWattageDisplay() {
+        let monitor = PowerMonitor.shared
+        let wattageText = monitor.lastReadFailed
+            ? "—" : String(format: detailLevelFormatString(), monitor.wattage)
         let attrs: [NSAttributedString.Key: Any] = [.font: currentFont()]
 
         if groupStatusItems {
-            // Build a single combined attributed string in the fixed order the user
-            // requested: Battery percent (+charge icon), Wattage, Uptime.
-            let result = NSMutableAttributedString()
-
-            // Determine separator between major components. `showDash` takes
-            // precedence; `uptimeCompact` removes separators entirely.
-            let sep: String
-            if uptimeCompact {
-                sep = ""
-            } else if showDash {
-                sep = " - "
-            } else {
-                sep = " "
-            }
-
-            // 1) Battery (percent + optional charge icon)
-            if showBattery, let bAttr = batteryAttributedString() {
-                result.append(bAttr)
-                // separator between battery and wattage
-                result.append(NSAttributedString(string: sep, attributes: attrs))
-            }
-
-            // 2) Wattage
-            let wattAttr = wattageAttributedString(from: wattageText)
-            result.append(wattAttr)
-
-            // spacer between wattage and uptime
-            if showUptime {
-                result.append(NSAttributedString(string: sep, attributes: attrs))
-                result.append(uptimeAttributedString())
-            }
-
+            let result = buildMenuBarAttributedString()
             if let wBtn = statusItemWattage?.button {
                 wBtn.attributedTitle = result
                 wBtn.isHidden = false
@@ -1088,10 +907,96 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
             alert.runModal()
-            
+
             // Reset the state to match the actual system state
             checkLaunchAtLoginStatus()
         }
+    }
+
+    // MARK: - Settings Window
+
+    @objc private func openSettings() {
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController(appDelegate: self)
+            settingsWindowController?.window?.center()
+        }
+        // Always re-sync controls in case the user changed things via the menu.
+        settingsWindowController?.syncControls()
+        settingsWindowController?.showWindow(nil)
+        // LSUIElement apps don't auto-activate when opening a window.
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Called by SettingsWindowController after it has already written the new
+    /// value to UserDefaults. Updates the in-memory property and refreshes the
+    /// display, mirroring exactly what the right-click menu actions do.
+    func applyChange(forKey key: String) {
+        let d = UserDefaults.standard
+        switch key {
+        case "detailLevel":
+            detailLevel = DetailLevel(rawValue: d.integer(forKey: key)) ?? Defaults.detailLevel
+            updateWattageDisplay()
+        case "paceLevel":
+            paceLevel = PaceLevel(rawValue: d.integer(forKey: key)) ?? Defaults.paceLevel
+            PowerMonitor.shared.updatePace(paceLevel)
+        case "widthMode":
+            let mode = WidthMode(rawValue: d.string(forKey: key) ?? "") ?? Defaults.widthMode
+            widthMode = mode
+            switch mode {
+            case .dynamic:
+                statusItemWattage?.length = NSStatusItem.variableLength
+                highWattageTimer?.invalidate()
+                highWattageTimer = nil
+                highWattageTimestamp = nil
+            case .fixed:
+                if widestWidths.isEmpty { calculateWidestWidths() }
+            }
+            updateWattageDisplay()
+        case "fontSize":
+            fontSize = FontSize(rawValue: d.integer(forKey: key)) ?? Defaults.fontSize
+            _cachedFont = nil
+            _cachedDotImages = [:]
+            calculateWidestWidths()
+            updateWattageDisplay()
+        case "labelCase":
+            labelCase = LabelCase(rawValue: d.string(forKey: key) ?? "") ?? Defaults.labelCase
+            updateWattageDisplay()
+        case "showBattery":
+            showBattery = d.bool(forKey: key)
+            updateWattageDisplay()
+        case "showUptime":
+            showUptime = d.bool(forKey: key)
+            updateWattageDisplay()
+        case "uptimeCompact":
+            uptimeCompact = d.bool(forKey: key)
+            updateWattageDisplay()
+        case "uptimeShowMinutes":
+            uptimeShowMinutes = d.bool(forKey: key)
+            updateWattageDisplay()
+        case "showDash":
+            showDash = d.bool(forKey: key)
+            updateWattageDisplay()
+        case "groupStatusItems":
+            groupStatusItems = d.bool(forKey: key)
+            updateWattageDisplay()
+        case "componentOrder":
+            let raw = (d.string(forKey: key) ?? "battery,wattage,uptime")
+                .components(separatedBy: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            let allKeys = Set(["battery", "wattage", "uptime"])
+            componentOrder = (raw.count == 3 && Set(raw) == allKeys)
+                ? raw : ["battery", "wattage", "uptime"]
+            updateWattageDisplay()
+        default:
+            break
+        }
+    }
+
+    /// Toggles launch-at-login, called from SettingsWindowController.
+    /// Delegates to the existing toggleLaunchAtLogin() which handles errors
+    /// and keeps the right-click menu item in sync.
+    func applyLaunchAtLoginChange() {
+        toggleLaunchAtLogin()
     }
 }
 

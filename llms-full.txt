@@ -1,0 +1,244 @@
+# WattSec+ — Full LLM Reference
+
+Consolidated architecture, code schema, and conventions. For quick navigation see llms.txt.
+
+---
+
+## Project overview
+
+WattSec+ is a macOS menu bar application that displays real-time system power draw (watts), battery percentage with charge indicator, and system uptime. It is a fork of beutton/wattsec with an expanded feature set.
+
+Key properties:
+- Pure AppKit (no SwiftUI, no Xcode project)
+- Builds with `swiftc` directly via `build.sh`
+- Minimum deployment target: macOS 13.0
+- App Sandbox disabled (required for IOKit SMC access — not App Store distributable)
+- LSUIElement: true (no Dock icon, no app switcher entry)
+
+---
+
+## File map
+
+```
+wattsecplus/
+├── WattSec/
+│   ├── main.swift             # AppKit bootstrap — NSApplication + AppDelegate
+│   ├── WattSecApp.swift       # All app logic: AppDelegate, PowerMonitor
+│   ├── SettingsWindow.swift   # NSWindowController settings panel
+│   ├── SMC.swift              # IOKit SMC interface
+│   ├── Info.plist             # __VERSION__ substituted by build.sh via sed
+│   ├── WattSec.entitlements   # Sandbox off; login items + automation on
+│   └── Assets.xcassets/       # AppIcon (iconutil → AppIcon.icns in build)
+├── build.sh                   # swiftc build + .app assembly, optional DMG/signing
+├── VERSION                    # Single-line version string e.g. "2025.03.05"
+├── README.md                  # User-facing documentation
+├── CLAUDE.md                  # Architecture notes for AI assistants
+├── llms.txt                   # LLM navigation index (this file's sibling)
+├── llms-full.txt              # This file
+└── docs/
+    ├── SETUP.md               # Build prerequisites and commands
+    ├── USAGE.md               # Settings and menu bar interactions
+    └── CONTRIBUTING.md        # How to add features and modify the codebase
+```
+
+---
+
+## UserDefaults schema
+
+All keys are read/written via `UserDefaults.standard`. Settings version key: `settingsVersion` (currently `1`). Bump in `loadUserPreferences()` to force a reset to defaults on next launch.
+
+| Key | Type | Default | Values |
+|---|---|---|---|
+| `detailLevel` | Int | 1 | 0 = low (0dp), 1 = medium (1dp), 2 = high (2dp) |
+| `paceLevel` | Int | 1 | 1 = 1s, 3 = 3s, 5 = 5s |
+| `widthMode` | String | "dynamic" | "dynamic", "fixed" |
+| `fontSize` | Int | 2 | 0 = 10pt, 1 = 12pt, 2 = 12.5pt, 3 = 13pt, 4 = 15pt |
+| `labelCase` | String | "lowercase" | "uppercase", "lowercase" |
+| `showUptime` | Bool | true | — |
+| `uptimeCompact` | Bool | false | removes spaces between uptime components |
+| `uptimeShowMinutes` | Bool | false | show minutes even when showing days |
+| `showBattery` | Bool | false | — |
+| `showDash` | Bool | false | uses " - " separator in grouped mode |
+| `groupStatusItems` | Bool | true | grouped vs. separate NSStatusItems |
+
+Launch at Login is managed via `SMAppService.mainApp` — not stored in UserDefaults.
+
+---
+
+## Enums (WattSecApp.swift)
+
+```swift
+enum DetailLevel: Int  { case low = 0, medium = 1, high = 2 }
+enum PaceLevel: Int    { case fast = 1, medium = 3, slow = 5 }
+enum WidthMode: String { case dynamic, fixed }
+enum LabelCase: String { case uppercase, lowercase }
+enum FontSize: Int     { case extraSmall=0, small=1, medium=2, large=3, extraLarge=4 }
+// FontSize.pointSize: 10, 12, 12.5, 13, 15
+```
+
+---
+
+## AppDelegate — key properties (WattSecApp.swift)
+
+```swift
+class AppDelegate: NSObject, NSApplicationDelegate {
+    // Status items — up to three, independent for Command-drag reordering
+    private var statusItemWattage: NSStatusItem?
+    private var statusItemBattery: NSStatusItem?
+    private var statusItemUptime:  NSStatusItem?
+
+    // In-memory settings (mirrors UserDefaults)
+    private var detailLevel: DetailLevel
+    private var paceLevel: PaceLevel
+    private var widthMode: WidthMode
+    private var fontSize: FontSize
+    private var labelCase: LabelCase
+    private var showUptime: Bool
+    private var uptimeCompact: Bool
+    private var uptimeShowMinutes: Bool
+    private var showBattery: Bool
+    private var showDash: Bool
+    private var groupStatusItems: Bool
+
+    // Battery cache — IOKit read once at launch and on plug/unplug events
+    private var cachedBattery: BatteryState?
+
+    // Font/dot image cache — invalidated on fontSize change
+    private var _cachedFont: NSFont?
+    private var _cachedDotImages: [NSColor: NSImage]
+
+    // Settings window
+    private var settingsWindowController: SettingsWindowController?
+}
+```
+
+---
+
+## PowerMonitor (WattSecApp.swift)
+
+```swift
+class PowerMonitor: NSObject, ObservableObject {
+    static let shared = PowerMonitor()
+    @Published private(set) var wattage: Double = 0.0
+    @Published private(set) var lastReadFailed: Bool = false
+    // Polling via DispatchSourceTimer on background queue "com.oliverbagley.WattSecPlus.smc"
+    // Always dispatches @Published updates back to DispatchQueue.main
+    func updatePace(_ pace: PaceLevel)  // rebuilds timer; no-op if pace unchanged
+    func fetchWattage()                 // immediate one-shot read (called at launch)
+}
+```
+
+---
+
+## Display pipeline
+
+1. `PowerMonitor.$wattage` → debounced (0.1s) Combine sink in AppDelegate
+2. Calls `updateWattageDisplay()` on main thread
+3. In **grouped** mode: calls `buildMenuBarAttributedString()` → sets on `statusItemWattage.button.attributedTitle`; removes battery + uptime status items entirely
+4. In **separated** mode: updates each status item independently; battery/uptime items created on demand
+
+### buildMenuBarAttributedString()
+
+Public method on AppDelegate. Returns the exact attributed string shown in the menu bar (Battery · Wattage · Uptime order). Also called by SettingsWindow for the live preview.
+
+```swift
+func buildMenuBarAttributedString() -> NSAttributedString {
+    // separator: "" if uptimeCompact, " - " if showDash, else " "
+    // components: [battery?] [sep] [wattage] [sep] [uptime?]
+    // each component rendered with its own sub-fonts (unit chars at 70–75% size)
+}
+```
+
+### Attributed string helpers
+
+- `wattageAttributedString(from:)` — number at full size, w/W at 70%
+- `batteryAttributedString()` — optional dot (orange=charging, white=plugged) + number + % at 70% in lowercase mode
+- `uptimeAttributedString()` — d/h/m labels at 75%, respects compact and showMinutes
+
+---
+
+## SettingsWindow ↔ AppDelegate communication
+
+SettingsWindowController holds a `weak var appDelegate: AppDelegate?`.
+
+When a control changes:
+1. SettingsWindow writes the new value to UserDefaults
+2. Calls `appDelegate?.applyChange(forKey:)` with the relevant key
+3. AppDelegate reads the new value from UserDefaults, updates its in-memory property, invalidates caches if needed (font/dot images on `fontSize`; fixed width recalc on `fontSize` or `widthMode`), and calls `updateWattageDisplay()`
+
+Launch at Login changes go via `appDelegate?.applyLaunchAtLoginChange()` which delegates to the existing `toggleLaunchAtLogin()` method (SMAppService error handling + menu sync).
+
+---
+
+## Fixed-width mode
+
+`widestWidths: [DetailLevel: [Int: CGFloat]]` — precomputed pixel widths keyed by detail level → character count. Recalculated via `calculateWidestWidths()` on launch and on font/widthMode change.
+
+When wattage crosses 100W (`Constants.highWattageThreshold`), the status item snaps to the wider slot. After dropping back below, it holds for 60 seconds (`Constants.highWattageTimeoutSeconds`) before returning to narrow — avoids rapid jitter.
+
+---
+
+## SettingsWindowController (SettingsWindow.swift)
+
+```swift
+final class SettingsWindowController: NSWindowController {
+    weak var appDelegate: AppDelegate?
+
+    // Controls
+    var detailControl, paceControl, widthControl: NSSegmentedControl
+    var fontSizeControl, labelCaseControl: NSSegmentedControl
+    var showBatteryCheck, showUptimeCheck: NSButton
+    var uptimeCompactCheck, uptimeMinutesCheck: NSButton
+    var groupItemsCheck, showDashCheck, launchAtLoginCheck: NSButton
+    var previewLabel: NSTextField   // shows buildMenuBarAttributedString() live
+
+    // Live preview subscription
+    var wattageSubscription: AnyCancellable?  // PowerMonitor.$wattage → refreshPreview()
+
+    // Escape key handler
+    var escMonitor: Any?  // local NSEvent monitor, removed in deinit
+}
+```
+
+Window: 360×730pt, `.hudWindow` NSVisualEffectView, `cornerRadius 12`, `titlebarAppearsTransparent`, `fullSizeContentView`. Fade-in on `showWindow(_:)` via NSAnimationContext (0.18s easeOut).
+
+`syncControls()` — reads all UserDefaults + live SMAppService state, called at init and each time the window is shown.
+
+`refreshPreview()` — calls `appDelegate?.buildMenuBarAttributedString()`, adds `.center` paragraph style, sets `previewLabel.attributedStringValue`.
+
+`updateUptimeSubOptions()` — disables/fades compact+minutes rows when Show Uptime is off.
+
+---
+
+## SMC.swift
+
+Thin IOKit wrapper. Private singleton init (`SMC.shared`) — never create a second instance. `getValue(_ key: String) -> Double?` reads the `flt ` (4-byte IEEE 754) data type. Key used: `"PSTR"` (system power draw in watts). Negative values from charge handoffs are clamped to 0 in PowerMonitor.
+
+---
+
+## Build system
+
+`build.sh` — pure bash, no Xcode project.
+
+Key variables:
+- `src_files` array — all `.swift` source files passed to `swiftc`
+- `sdk_path` — resolved via `xcrun --sdk macosx --show-sdk-path`
+- Frameworks: `Cocoa`, `IOKit`, `ServiceManagement`
+- `-target arm64-apple-macos13.0` (or x86_64, or both via lipo for universal)
+- Version: read from `VERSION` file; substituted into `Info.plist` via `sed s/__VERSION__/`
+- Output: `dist/WattSecPlus.app` (dist/ is gitignored, fully regenerated each build)
+
+To add a new source file: append it to the `src_files` array in `build.sh`.
+
+---
+
+## Key design constraints
+
+- No SwiftUI — entry point is `main.swift` + `AppDelegate`. Never import SwiftUI.
+- No Xcode project — do not add `.xcodeproj`. All compilation via `build.sh`.
+- No second `SMC()` instance — `io_connect_t` is held persistently by `SMC.shared`.
+- `updateMenuStates(_:selectedValue:)` uses typed `switch` for Int vs Int and String vs String comparisons — do not revert to `===` (breaks String-keyed checkmarks).
+- `_cachedFont` and `_cachedDotImages` must be invalidated together in `changeFontSize(_:)`.
+- `groupStatusItems` mode removes secondary NSStatusItems entirely (not just hides) — re-entering separated mode recreates them.
+- `PowerMonitor.readAndPublish()` runs on `smcQueue`. Always dispatch back to main before touching `@Published` properties.
+- Status item watcher timer fires on main run loop — do not add `DispatchQueue.main.async` inside its callback.

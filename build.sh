@@ -138,6 +138,7 @@ src_files=(
     WattSec/main.swift
     WattSec/SMC.swift
     WattSec/WattSecApp.swift
+    WattSec/SettingsWindow.swift
 )
 
 swiftc_flags=(
